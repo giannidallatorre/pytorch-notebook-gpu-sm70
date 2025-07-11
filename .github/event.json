@@ -1,0 +1,7 @@
+{
+  "ref": "refs/heads/main",
+  "repository": {
+    "full_name": "giannidallatorre/pytorch-notebook-gpu-sm70"
+  },
+  "workflow": "Build Docker Image"
+}
