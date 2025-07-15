@@ -1,35 +1,37 @@
-FROM quay.io/jupyter/pytorch-notebook:cuda12-notebook-7.4.4
+# Use an official NVIDIA CUDA base image.
+# This version includes CUDA 12.1.1, cuDNN 8, and the development tools.
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
 LABEL maintainer="gianni.dallatorre@egi.eu"
-LABEL description="Jupyter PyTorch image with SM 7.0 (Tesla V100) support"
+LABEL description="Optimized Jupyter PyTorch image with CUDA 12.1 support for Tesla V100 (SM 7.0)"
 
-USER root
-
-# Install build dependencies
+# Install Python, pip, and other essentials in a single layer to save space
+# Clean up apt-get cache in the same RUN command
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake build-essential libjpeg-dev libpng-dev \
-    python3-dev curl libopenblas-dev libomp-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    python3.10 \
+    python3-pip \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-# Switch to non-root user
+# Create a non-root user 'jovyan' and set it as the working directory
+# This mimics the environment of the original jupyter images
+RUN useradd -m -s /bin/bash -N -u 1000 jovyan
 USER jovyan
+WORKDIR /home/jovyan
 
-# Set environment variables
-ENV TORCH_CUDA_ARCH_LIST="7.0" \
-    MAX_JOBS=4 \
-    PYTORCH_BUILD_VERSION=2.3.0 \
-    PYTORCH_BUILD_NUMBER=1
+# Add the user's local bin AND the NVIDIA tools directory to the PATH.
+# This ensures that executables installed by pip (like jupyter) are found.
+ENV PATH="/home/jovyan/.local/bin:/usr/local/nvidia/bin:${PATH}"
 
-# Clone and prepare PyTorch
-RUN git clone https://github.com/pytorch/pytorch /tmp/pytorch && \
-    cd /tmp/pytorch && \
-    git checkout v${PYTORCH_BUILD_VERSION} && \
-    git submodule update --init --recursive
+# Install Jupyter, PyTorch, and related libraries using pip, downloads the pre-compiled binaries
+# Use --no-cache-dir reduces the final image size
+# Use --extra-index-url to add the PyTorch repo instead of replacing the default one.
+RUN pip install --no-cache-dir jupyterlab \
+    torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Build and install PyTorch
-RUN cd /tmp/pytorch && \
-    pip install -r requirements.txt && \
-    python setup.py install && \
-    cd /home/jovyan && rm -rf /tmp/pytorch
+# Expose the default Jupyter port
+EXPOSE 8888
 
-# Install PyTorch explicitly with CUDA 12.1 support
-RUN pip install --no-cache-dir -upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Set the default command to start JupyterLab
+# It will be accessible on all network interfaces inside the container
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--ServerApp.token=''"]
