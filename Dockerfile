@@ -1,8 +1,15 @@
+# Stage 1: Build Julia environment and install packages
+FROM julia:1.10 AS julia_build
+
+# Install IJulia and CUDA.jl
+RUN julia -e 'using Pkg; Pkg.add("IJulia"); Pkg.add("CUDA");'
+
+# Stage 2: Final image with Python, PyTorch, and the Julia environment from Stage 1
 # Use an official NVIDIA CUDA base image with dev tools and Ubuntu 22.04
 FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 LABEL maintainer="gianni.dallatorre@egi.eu"
-LABEL description="Jupyter + PyTorch (CUDA 12.1) for Tesla V100"
+LABEL description="Jupyter + PyTorch (CUDA 12.1) + Julia for Tesla V100 (sm70)"
 
 # Install Python, pip, and optionally virtualenv support
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +34,12 @@ RUN pip install --no-cache-dir \
     torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 \
     --index-url https://download.pytorch.org/whl/cu121
 
-# Optional: Create non-root user (skip if not needed)
+# Copy Julia Installation from the build stage
+COPY --from=julia_build /usr/local/julia/ /usr/local/julia/
+COPY --from=julia_build /root/.julia/ /root/.julia/
+ENV PATH="/usr/local/julia/bin:${PATH}"
+
+# Create a non-root user
 RUN useradd -m -s /bin/bash -N -u 1000 jovyan
 USER jovyan
 WORKDIR /home/jovyan
