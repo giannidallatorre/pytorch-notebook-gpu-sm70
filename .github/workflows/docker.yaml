@@ -41,3 +41,36 @@ jobs:
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+
+  test:
+    name: Test Image
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
+      - name: Run container and test
+        run: |
+          docker run --rm --env JUPYTER_IMAGE="${{ github.repository }}" ghcr.io/${{ github.repository }}:latest /bin/bash -c "
+            # Display important environment variables and paths
+            echo '--- PATH ---'
+            echo \$PATH
+            echo '--- JUPYTER_IMAGE ---'
+            echo \$JUPYTER_IMAGE
+
+            # Python/PyTorch tests
+            python -c 'import torch; print(torch.__version__); print(torch.cuda.is_available())'
+
+            # Julia tests
+            julia -e 'using Pkg; using IJulia'
+
+            # Environment variable test
+            if [ -z \"\$JUPYTER_IMAGE\" ]; then echo \"JUPYTER_IMAGE not set\"; exit 1; fi
+            echo \"Tests passed!\"
+          "
