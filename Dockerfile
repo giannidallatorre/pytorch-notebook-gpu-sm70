@@ -35,15 +35,14 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Copy Julia Installation from the build stage
-COPY --from=julia_build /usr/local/julia/ /usr/local/julia/
-COPY --from=julia_build /root/.julia/ /root/.julia/
-ENV PATH="/usr/local/julia/bin:${PATH}"
+COPY --from=julia_build /usr/local /usr/local
+COPY --from=julia_build /root/.julia /root/.julia
 
 # Create a non-root user
 RUN useradd -m -s /bin/bash -N -u 1000 jovyan
 USER jovyan
 WORKDIR /home/jovyan
-ENV PATH="/home/jovyan/.local/bin:/usr/local/nvidia/bin:${PATH}"
+ENV PATH="/usr/local/julia/bin:/home/jovyan/.local/bin:/usr/local/nvidia/bin:${PATH}"
 
 # Expose Jupyter port
 EXPOSE 8888
