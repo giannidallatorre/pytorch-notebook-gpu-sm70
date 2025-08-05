@@ -2,7 +2,11 @@
 FROM julia:1.10 AS julia_build
 
 # Install IJulia and CUDA.jl
-RUN julia -e 'using Pkg; Pkg.add("IJulia"); Pkg.add("CUDA");'
+ENV JULIA_DEPOT_PATH=/opt/julia_depot
+RUN mkdir -p $JULIA_DEPOT_PATH
+
+RUN julia -e 'using Pkg; Pkg.add("IJulia"); Pkg.add("CUDA"); Pkg.gc();'
+
 
 # Stage 2: Final image with Python, PyTorch, and the Julia environment from Stage 1
 # Use an official NVIDIA CUDA base image with dev tools and Ubuntu 22.04
@@ -24,25 +28,30 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
 RUN python3 -m pip install --upgrade pip
 
 # Install JupyterHub (singleuser), JupyterLab, and notebook server
-RUN pip install --no-cache-dir \
-    jupyterlab \
-    notebook \
-    jupyterhub
-
 # Install PyTorch + CUDA 12.1 from PyTorch official index
 RUN pip install --no-cache-dir \
+    jupyterlab notebook jupyterhub \
+ && pip install --no-cache-dir \
     torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 \
-    --index-url https://download.pytorch.org/whl/cu121
+    --index-url https://download.pytorch.org/whl/cu121 \
+ && pip cache purge
 
 # Copy Julia Installation from the build stage
-COPY --from=julia_build /usr/local /usr/local
-COPY --from=julia_build /root/.julia /root/.julia
+COPY --from=julia_build /usr/local/julia /usr/local/julia
+COPY --from=julia_build /opt/julia_depot /opt/julia_depot
 
 # Create a non-root user
-RUN useradd -m -s /bin/bash -N -u 1000 jovyan
+RUN groupadd -g 1000 jovyan && \
+    useradd -m -s /bin/bash -u 1000 -g jovyan jovyan && \
+    chown -R jovyan:jovyan /opt/julia_depot
 USER jovyan
 WORKDIR /home/jovyan
-ENV PATH="/usr/local/julia/bin:/home/jovyan/.local/bin:/usr/local/nvidia/bin:${PATH}"
+ENV PATH="/usr/local/julia/bin:/home/jovyan/.local/bin:${PATH}"
+ENV JULIA_DEPOT_PATH=/opt/julia_depot
+
+#RUN julia -e 'using Pkg; Pkg.activate("."); Pkg.add("IJulia"); Pkg.add("CUDA");'
+RUN julia -e 'using Pkg; Pkg.add("IJulia"); Pkg.add("CUDA");'
+RUN echo "🔥 Built at $(date -u) in CI run $CI" > /home/jovyan/build-marker.txt
 
 # Expose Jupyter port
 EXPOSE 8888
