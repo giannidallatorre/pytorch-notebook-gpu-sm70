@@ -1,4 +1,4 @@
-name: Build Docker Image
+name: Build and Test Docker Image
 
 on:
   push:
@@ -8,71 +8,116 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Use 'my-local-image' for local act runs, otherwise use the GHCR image name.
+      IMAGE_NAME: my-local-image
 
     permissions:
       packages: write
       contents: read
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v3
-
-    - name: Set up Docker Buildx
-      if: ${{ !env.ACT }}
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-
-    - name: Extract metadata for Docker tags
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ghcr.io/${{ github.repository }}
-
-    - name: Build and push image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-
-  test:
-    name: Test Image
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Log in to GHCR
+      - name: Set IMAGE_NAME for GitHub Actions runs
+        if: ${{ !env.ACT }}
+        run: echo "IMAGE_NAME=ghcr.io/${{ github.repository }}:test-latest" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        if: ${{ !env.ACT }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: ${{ !env.ACT }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
 
+      - name: Build Docker image
+        if: ${{ env.ACT }}
+        run: |
+          echo "▶️ Building image locally: $IMAGE_NAME"
+          docker build -t $IMAGE_NAME .
+
+
+      - name: Extract metadata for Docker tags
+        if: ${{ !env.ACT }}
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - name: Build and push image
+        if: ${{ !env.ACT }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  test:
+    name: Test Image
+    runs-on: ubuntu-latest
+    needs: build
+    env:
+      IMAGE_NAME: my-local-image
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set IMAGE_NAME for GitHub Actions runs
+        if: ${{ !env.ACT }}
+        run: echo "IMAGE_NAME=ghcr.io/${{ github.repository }}:test-latest" >> $GITHUB_ENV
+
+      - name: Log in to GHCR
+        if: ${{ !env.ACT }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
+
+      #  Pull image on GitHub Actions; skipped locally to use the built image
+      - name: Pull image from GHCR
+        if: ${{ !env.ACT }}
+        run: docker pull $IMAGE_NAME
+
+      - name: Check build marker
+        run: |
+          docker run --rm $IMAGE_NAME cat /home/jovyan/build-marker.txt || echo "❌ Marker not found!"
+
+      - name: Inspect Julia path
+        run: |
+          docker run --rm $IMAGE_NAME bash -c "ls -la /usr/local/julia/bin || echo '❌ Julia not found'"
       - name: Run container and test
         run: |
-          docker run --rm --user jovyan ghcr.io/${{ github.repository }}:latest /bin/bash -c "
+          docker run --rm $IMAGE_NAME /bin/bash -c "
             set -e
-            # Explicitly set the PATH to include all necessary directories
-            export PATH=\"/usr/local/julia/bin:/usr/bin:${PATH}\"
-            echo '--- PATH ---'
-            echo \$PATH
-            # Python/PyTorch tests
-            python3.10 -c 'import torch; print(torch.__version__); print(torch.cuda.is_available())'
-            # Julia tests
-            /usr/local/julia/bin/julia -e 'using Pkg; Pkg.add(\"IJulia\"); Pkg.add(\"CUDA\")'
-            # Final check
-            if ! /usr/local/julia/bin/julia -e 'using IJulia'; then
-              echo \"Julia IJulia failed to load.\"
-              exit 1
-            fi
-            echo \"Tests passed successfully!\"
+            export PATH=\"/usr/local/julia/bin:/usr/bin:\$PATH\"
+            export JULIA_DEPOT_PATH=/opt/julia_depot
+
+            echo '--- Julia version ---'
+            julia --version
+
+            echo '--- Julia: test CUDA and IJulia ---'
+              julia -e \"
+                using Pkg
+                using CUDA
+                println(\\\"✅ CUDA.jl loaded\\\")
+                using IJulia
+                println(\\\"✅ IJulia.jl loaded\\\")
+              \"
+
+            echo '--- Python: torch check ---'
+            python -c 'import torch; print(\"torch\", torch.__version__, \"cuda:\", torch.cuda.is_available())'
+
+            echo '--- Jupyter lab: check version ---'
+            jupyter lab --version || echo "❌ JupyterLab not found"
+
+            echo \"✅ All tests passed!\"
           "
+
